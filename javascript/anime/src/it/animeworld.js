@@ -2,12 +2,12 @@ const mangayomiSources = [
   {
     "name": "AnimeWorld",
     "lang": "it",
-    "id": 161616161, // ID arbitrario, cambialo se necessario
+    "id": 161616161, 
     "baseUrl": "https://www.animeworld.ac",
-    "apiUrl": "https://www.animeworld.so", // Usato per le chiamate API episodi
+    "apiUrl": "https://www.animeworld.so",
     "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png?s",
     "typeSource": "single",
-    "itemType": 1, // 1 = Anime
+    "itemType": 1, 
     "version": "1.0.0",
     "pkgPath": "anime/src/it/animeworld.js"
   }
@@ -172,7 +172,7 @@ class DefaultExtension extends MProvider {
     const genre = [];
     widget.select(".meta a[href*='/genre/']").forEach(g => genre.push(g.text));
 
-    let status = 5; // Unknown
+    let status = 5;
     const metaDt = widget.select(".meta dt");
     const metaDd = widget.select(".meta dd");
     
@@ -194,7 +194,7 @@ class DefaultExtension extends MProvider {
         const episodes = serverElement.select(".episode a");
         episodes.forEach(ep => {
             const epNum = ep.attr("data-episode-num");
-            const epId = ep.attr("data-id"); // Importante per l'API
+            const epId = ep.attr("data-id"); 
             // Salviamo data-id nell'url o usiamo l'url della pagina se necessario
             // Il codice Kotlin usa: "$number¿$actualUrl" nel load e poi fa scraping.
             // Qui passeremo l'URL della pagina e il data-id come parametro custom nell'url interno
@@ -221,7 +221,7 @@ class DefaultExtension extends MProvider {
         description,
         status,
         genre,
-        chapters, // Nota: Mangayomi usa 'chapters' anche per episodi anime
+        chapters, 
         link: fullUrl
     };
   }
@@ -309,7 +309,7 @@ class DefaultExtension extends MProvider {
     } else if (json.target && json.target.includes("animeworld")) {
         // Link diretto (raro ma gestito nel kotlin)
         streams.push({
-            url: json.grabber, // o json.target, dipende dalla risposta specifica
+            url: json.grabber, 
             quality: "Direct",
             originalUrl: json.grabber,
             headers: headers
@@ -334,3 +334,4 @@ class DefaultExtension extends MProvider {
     ];
   }
 }
+
