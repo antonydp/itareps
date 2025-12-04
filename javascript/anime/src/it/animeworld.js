@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.3",
+    "version": "1.0.4",
     "pkgPath": "anime/src/it/animeworld.js"
 }];
 
@@ -17,8 +17,7 @@ class DefaultExtension extends MProvider {
         this.client = new Client();
     }
 
-    // Header Generici per la navigazione (Ricerca, Dettagli)
-    // NON mettiamo X-Requested-With qui per evitare blocchi sulla ricerca
+    // Header per la navigazione normale
     getHeaders(url) {
         return {
             "Referer": this.source.baseUrl + "/",
@@ -27,12 +26,12 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    // Header Specifici per l'API Video
+    // Header specifici per l'API (IMPORTANTE: X-Requested-With)
     getApiHeaders() {
         return {
             "Referer": this.source.baseUrl + "/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "X-Requested-With": "XMLHttpRequest", // FONDAMENTALE per i video
+            "X-Requested-With": "XMLHttpRequest",
             "Accept": "application/json, text/javascript, */*; q=0.01"
         };
     }
@@ -41,7 +40,7 @@ class DefaultExtension extends MProvider {
         return await this.client.get(url, this.getHeaders(url));
     }
 
-    // --- Search & Listing (La tua logica funzionante) ---
+    // --- Search & Listing ---
 
     async getAnimeList(url) {
         const res = await this.request(url);
@@ -86,7 +85,6 @@ class DefaultExtension extends MProvider {
     }
 
     async search(query, page, filters) {
-        // Correzione URL ricerca per matchare la struttura del sito
         return await this.getAnimeList(`${this.source.baseUrl}/filter?keyword=${query}&sort=1&page=${page}`);
     }
 
@@ -132,10 +130,9 @@ class DefaultExtension extends MProvider {
         const serversContainer = doc.selectFirst(".widget.servers .widget-body");
         
         if (serversContainer) {
-            // Cerchiamo specificamente il Server 9 (AnimeWorld Server) perché è quello diretto
+            // Cerchiamo il Server 9
             let targetServer = serversContainer.selectFirst(".server[data-name='9']");
             
-            // Se non c'è il server 9, proviamo un fallback generico
             if (!targetServer) {
                 targetServer = serversContainer.selectFirst(".server.active") || serversContainer.selectFirst(".server");
             }
@@ -150,7 +147,7 @@ class DefaultExtension extends MProvider {
                     if (epId) {
                         chapters.push({
                             name: "Episodio " + epNum,
-                            url: epId, // Passiamo SOLO l'ID numerico al getVideoList
+                            url: epId, // ID numerico per API
                             scanlator: "AnimeWorld",
                             dateUpload: String(Date.now()) 
                         });
@@ -173,11 +170,12 @@ class DefaultExtension extends MProvider {
     // --- Video Extraction ---
 
     async getVideoList(url) {
-        // Qui 'url' è in realtà l'ID dell'episodio (es. "12345") passato da getDetail
+        // url qui contiene l'ID (es. "GFU39")
         const epId = url;
-        const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${epId}`;
         
-        // Usiamo gli header specifici per l'API (con X-Requested-With)
+        // FIX: Scriviamo l'URL completo a mano per evitare l'errore "No host specified"
+        const apiUrl = `https://www.animeworld.so/api/episode/info?id=${epId}`;
+        
         const apiRes = await this.client.get(apiUrl, this.getApiHeaders());
         
         if (!apiRes.body) return [];
@@ -193,14 +191,14 @@ class DefaultExtension extends MProvider {
         const target = json.target;
         const streams = [];
 
-        // AnimeWorld Server (Link diretto .mp4 di solito)
+        // 1. Link Diretto (Grabber)
         if (grabber && (grabber.includes("animeworld") || grabber.includes("http"))) {
             streams.push({
                 url: grabber,
                 quality: "AnimeWorld Server",
                 originalUrl: grabber,
                 headers: {
-                    "Referer": this.source.baseUrl + "/", // Importante per i video
+                    "Referer": this.source.baseUrl + "/",
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
             });
