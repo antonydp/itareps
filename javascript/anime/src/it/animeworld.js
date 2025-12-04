@@ -1,14 +1,14 @@
 const mangayomiSources = [
   {
     "name": "AnimeWorld",
-    "id": 192837465, // Generato casualmente
+    "id": 192837465,
     "baseUrl": "https://www.animeworld.ac",
     "lang": "it",
     "typeSource": "single",
     "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png?s",
     "isNsfw": false,
     "hasCloudflare": false,
-    "itemType": 1, // Anime
+    "itemType": 1,
     "version": "1.1.1",
     "pkgPath": "anime/src/it/animeworld.js"
   }
@@ -148,7 +148,7 @@ class DefaultExtension extends MProvider {
     });
 
     // Stato
-    let status = 5; // Unknown
+    let status = 5;
     const metaDt = widgetInfo.select(".meta dt");
     const metaDd = widgetInfo.select(".meta dd");
     
@@ -156,8 +156,8 @@ class DefaultExtension extends MProvider {
       const label = metaDt[i].text();
       if (label.includes("Stato")) {
         const statusText = metaDd[i].text().toLowerCase();
-        if (statusText.includes("finito")) status = 1; // Completed
-        else if (statusText.includes("in corso")) status = 0; // Ongoing
+        if (statusText.includes("finito")) status = 1;
+        else if (statusText.includes("in corso")) status = 0;
       }
     }
 
@@ -177,7 +177,7 @@ class DefaultExtension extends MProvider {
       
       chapters.push({
         name: `Episodio ${epNum}`,
-        url: epLink, // Questo URL servirà a getVideoList
+        url: epLink,
         episode: epNum
       });
     });
@@ -251,3 +251,4 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 }
+
