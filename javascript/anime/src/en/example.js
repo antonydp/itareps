@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "version": "1.0.0",
     "dateFormat": "",
     "dateFormatLocale": "",
-    "itemType": 1, // Use 0 for manga, 1 for anime and 2 for novel
+    "itemType": 1,
     "pkgPath": "anime/src/en/example.js"
 }];
 
