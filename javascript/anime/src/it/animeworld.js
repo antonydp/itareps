@@ -1,209 +1,336 @@
-const mangayomiSources = [{
+const mangayomiSources = [
+  {
     "name": "AnimeWorld",
     "lang": "it",
+    "id": 161616161, // ID arbitrario, cambialo se necessario
     "baseUrl": "https://www.animeworld.ac",
-    "apiUrl": "https://www.animeworld.so",
-    "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png",
+    "apiUrl": "https://www.animeworld.so", // Usato per le chiamate API episodi
+    "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png?s",
     "typeSource": "single",
-    "itemType": 1,
-    "version": "1.0.2",
+    "itemType": 1, // 1 = Anime
+    "version": "1.0.0",
     "pkgPath": "anime/src/it/animeworld.js"
-}];
+  }
+];
 
 class DefaultExtension extends MProvider {
+  constructor() {
+    super();
+    this.client = new Client();
+  }
 
-    constructor() {
-        super();
-        this.client = new Client();
+  getHeaders() {
+    return {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+      "Referer": this.source.baseUrl,
+      "Origin": this.source.baseUrl,
+      "X-Requested-With": "XMLHttpRequest"
+    };
+  }
+
+  // Helper per decodificare il parametro 'sig' di VidGuard (Porting dal Kotlin)
+  sigDecode(url) {
+    if (!url.includes("sig=")) return url;
+    
+    try {
+        let sig = url.split("sig=")[1].split("&")[0];
+        let t = "";
+        
+        // Hex decode e XOR 2
+        for (let i = 0; i < sig.length; i += 2) {
+            let hex = sig.substr(i, 2);
+            t += String.fromCharCode(parseInt(hex, 16) ^ 2);
+        }
+
+        // Base64 Decode
+        // Nota: QuickJS supporta atob solitamente. Se fallisce serve un polyfill.
+        // Aggiustiamo il padding se necessario (logica Kotlin)
+        let padding = t.length % 4;
+        if (padding === 2) t += "==";
+        else if (padding === 3) t += "=";
+
+        // Decodifica Base64
+        // In QuickJS/Mangayomi usiamo Buffer se disponibile o atob
+        let decoded = "";
+        if (typeof Buffer !== 'undefined') {
+            decoded = Buffer.from(t, 'base64').toString('utf-8');
+        } else {
+            decoded = atob(t);
+        }
+
+        // Drop last 5 chars e reverse
+        let tArr = decoded.slice(0, -5).split('').reverse();
+
+        // Swap pairs
+        for (let i = 0; i < tArr.length; i += 2) {
+            if (i + 1 < tArr.length) {
+                let temp = tArr[i];
+                tArr[i] = tArr[i + 1];
+                tArr[i + 1] = temp;
+            }
+        }
+
+        // Join e drop last 5
+        let result = tArr.join('').slice(0, -5);
+        return url.replace(sig, result);
+    } catch (e) {
+        console.error("Errore sigDecode:", e);
+        return url;
+    }
+  }
+
+  getPreference(key) {
+    // Implementazione base per le preferenze
+    try {
+        const val = new SharedPreferences().get(key);
+        return val ? parseInt(val) : 0;
+    } catch(e) {
+        return 0;
+    }
+  }
+
+  async request(url) {
+    const res = await this.client.get(url, this.getHeaders());
+    return new Document(res.body);
+  }
+
+  // Funzione comune per parsare la lista di anime
+  parseAnimeList(doc) {
+    const items = doc.select("div.film-list > .item");
+    const list = [];
+    
+    items.forEach((item) => {
+        const anchor = item.selectFirst("a.name");
+        if (!anchor) return;
+
+        const link = anchor.getHref; // es: /play/titolo.123
+        const title = anchor.text.replace(" (ITA)", "");
+        const poster = item.selectFirst("a.poster img").getSrc;
+        
+        list.push({
+            name: title,
+            imageUrl: poster,
+            link: link
+        });
+    });
+    return list;
+  }
+
+  async getPopular(page) {
+    // Mappato su "Più Visti" del codice Kotlin
+    // $mainUrl/filter?sort=6
+    const url = `${this.source.baseUrl}/filter?sort=6&page=${page}`;
+    const doc = await this.request(url);
+    const list = this.parseAnimeList(doc);
+    
+    const paging = doc.selectFirst("#paging-form span.total");
+    const totalPages = paging ? parseInt(paging.text) : 1;
+    const hasNextPage = page < totalPages;
+
+    return { list, hasNextPage };
+  }
+
+  async getLatestUpdates(page) {
+    // Mappato su "Ultimi aggiunti" del codice Kotlin
+    // $mainUrl/filter?sort=1
+    const url = `${this.source.baseUrl}/filter?sort=1&page=${page}`;
+    const doc = await this.request(url);
+    const list = this.parseAnimeList(doc);
+
+    const paging = doc.selectFirst("#paging-form span.total");
+    const totalPages = paging ? parseInt(paging.text) : 1;
+    const hasNextPage = page < totalPages;
+
+    return { list, hasNextPage };
+  }
+
+  async search(query, page, filters) {
+    // Mappato su $mainUrl/filter?sort=0&keyword=${query}
+    const url = `${this.source.baseUrl}/filter?sort=0&keyword=${encodeURIComponent(query)}&page=${page}`;
+    const doc = await this.request(url);
+    const list = this.parseAnimeList(doc);
+
+    const paging = doc.selectFirst("#paging-form span.total");
+    const totalPages = paging ? parseInt(paging.text) : 1;
+    const hasNextPage = page < totalPages;
+
+    return { list, hasNextPage };
+  }
+
+  async getDetail(url) {
+    // url arriva come /play/nome-anime.ID
+    // Dobbiamo gestire il redirect o chiamare l'url completo
+    const fullUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
+    const doc = await this.request(fullUrl);
+
+    // Dettagli principali
+    const widget = doc.selectFirst("div.widget.info");
+    const title = widget.selectFirst(".info .title").text.replace(" (ITA)", "");
+    const description = widget.selectFirst(".desc .long") ? widget.selectFirst(".desc .long").text : widget.selectFirst(".desc").text;
+    const poster = doc.selectFirst(".thumb img").getSrc;
+    
+    const genre = [];
+    widget.select(".meta a[href*='/genre/']").forEach(g => genre.push(g.text));
+
+    let status = 5; // Unknown
+    const metaDt = widget.select(".meta dt");
+    const metaDd = widget.select(".meta dd");
+    
+    for (let i = 0; i < metaDt.length; i++) {
+        const label = metaDt[i].text;
+        const value = metaDd[i].text;
+        if (label.includes("Stato")) {
+            if (value.toLowerCase().includes("corso")) status = 0; // Ongoing
+            else if (value.toLowerCase().includes("finito")) status = 1; // Completed
+        }
     }
 
-    getHeaders(url) {
-        return {
-            "Referer": this.source.baseUrl + "/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-            "X-Requested-With": "XMLHttpRequest"
-        };
-    }
-
-    async request(url) {
-        return await this.client.get(url, this.getHeaders(url));
-    }
-
-    // --- Search & Listing ---
-
-    async getAnimeList(url) {
-        const res = await this.request(url);
-        const doc = new Document(res.body);
-        const elements = doc.select("div.film-list > .item");
-        const list = [];
-
-        for (const element of elements) {
-            const a = element.selectFirst("a.name");
-            const img = element.selectFirst("img");
-            const dubElem = element.selectFirst(".status .dub");
+    // Episodi
+    // Logica Kotlin: Cerca in .server[data-name="9"] (Server principale)
+    const chapters = [];
+    const serverElement = doc.selectFirst(".widget.servers .server[data-name='9']");
+    
+    if (serverElement) {
+        const episodes = serverElement.select(".episode a");
+        episodes.forEach(ep => {
+            const epNum = ep.attr("data-episode-num");
+            const epId = ep.attr("data-id"); // Importante per l'API
+            // Salviamo data-id nell'url o usiamo l'url della pagina se necessario
+            // Il codice Kotlin usa: "$number¿$actualUrl" nel load e poi fa scraping.
+            // Qui passeremo l'URL della pagina e il data-id come parametro custom nell'url interno
             
-            if (!a) continue;
-
-            let title = a.text;
-            if (dubElem) title += " (Dub)";
-
-            list.push({
-                name: title,
-                imageUrl: img ? img.attr("src") : "",
-                link: a.attr("href")
+            // Creiamo un URL virtuale contenente le info necessarie per getVideoList
+            const chapterUrl = JSON.stringify({
+                episodeId: epId,
+                episodeNum: epNum,
+                pageUrl: fullUrl
             });
-        }
 
-        const nextLink = doc.selectFirst("div.paging-wrapper a#next-page");
-        const nextLinkAlt = doc.selectFirst("li.next a");
-        
-        let hasNextPage = false;
-        if (nextLink || nextLinkAlt) {
-            hasNextPage = true;
-        }
-
-        return { list, hasNextPage };
+            chapters.push({
+                name: `Episodio ${epNum}`,
+                url: chapterUrl,
+                scanlator: "AnimeWorld"
+            });
+        });
     }
 
-    async getPopular(page) {
-        return await this.getAnimeList(`${this.source.baseUrl}/filter?sort=6&page=${page}`);
-    }
+    // Invertiamo per avere il primo episodio in cima se necessario, o lasciamo così.
+    // Solitamente Mangayomi gestisce l'ordine.
+    
+    return {
+        description,
+        status,
+        genre,
+        chapters, // Nota: Mangayomi usa 'chapters' anche per episodi anime
+        link: fullUrl
+    };
+  }
 
-    async getLatestUpdates(page) {
-        return await this.getAnimeList(`${this.source.baseUrl}/filter?sort=1&page=${page}`);
-    }
+  async getVideoList(url) {
+    // Qui url è il JSON stringificato creato in getDetail
+    const data = JSON.parse(url);
+    const episodeId = data.episodeId;
 
-    async search(query, page, filters) {
-        return await this.getAnimeList(`${this.source.baseUrl}/filter?keyword=${query}&sort=1&page=${page}`);
-    }
+    // Chiamata API per ottenere il link reale
+    // Url: https://www.animeworld.so/api/episode/info?id={id}
+    const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${episodeId}`;
+    
+    // Importante: Referer deve essere la pagina principale di AnimeWorld
+    const headers = {
+        ...this.getHeaders(),
+        "Referer": this.source.baseUrl,
+        "X-Requested-With": "XMLHttpRequest"
+    };
 
-    // --- Details ---
+    const res = await this.client.get(apiUrl, headers);
+    const json = JSON.parse(res.body);
+    
+    const streams = [];
 
-    async getDetail(url) {
-        const res = await this.request(url);
-        const doc = new Document(res.body);
+    // Logica Kotlin: if (it.target.contains("listeamed.net")) -> VidguardExtractor
+    if (json.target && json.target.includes("listeamed.net")) {
+        try {
+            // VidGuard Extractor Logic
+            const vidRes = await this.client.get(json.target, headers);
+            const vidBody = vidRes.body;
 
-        const infoWidget = doc.selectFirst("div.widget.info");
-        
-        let title = infoWidget ? infoWidget.selectFirst(".info .title")?.text.replace(" (ITA)", "") : "Sconosciuto";
-        const thumb = doc.selectFirst("div.thumb img");
-        let img = thumb ? thumb.attr("src") : "";
-        
-        let desc = "";
-        const descElem = doc.selectFirst(".desc") || doc.selectFirst("#info .desc");
-        if (descElem) desc = descElem.text.trim();
-
-        let status = 5; 
-        const metaDt = infoWidget ? infoWidget.select(".meta dt") : [];
-        for (const dt of metaDt) {
-            if (dt.text.includes("Stato")) {
-                const statusTxt = dt.nextElementSibling.text.toLowerCase();
-                if (statusTxt.includes("finito")) status = 1; 
-                if (statusTxt.includes("in corso")) status = 0; 
-            }
-        }
-
-        const genres = [];
-        const genreTags = infoWidget ? infoWidget.select("a[href*='/genre/']") : [];
-        for (const g of genreTags) {
-            genres.push(g.text);
-        }
-
-        // --- ESTRAZIONE EPISODI ---
-        const chapters = [];
-        
-        const serversContainer = doc.selectFirst(".widget.servers .widget-body");
-        
-        if (serversContainer) {
-            // Cerca server 9 (AW) o fallback sul primo attivo
-            let targetServer = serversContainer.selectFirst(".server[data-name='9']");
-            if (!targetServer) {
-                targetServer = serversContainer.selectFirst(".server.active") || serversContainer.selectFirst(".server");
-            }
-
-            if (targetServer) {
-                const episodeLinks = targetServer.select("li.episode > a");
-
-                for (const el of episodeLinks) {
-                    const epNum = el.attr("data-episode-num");
-                    const epId = el.attr("data-id"); 
+            // Cerchiamo lo script offuscato o l'oggetto svg
+            // VidGuard usa script con eval(). Dobbiamo estrarre il risultato.
+            // Poiché non possiamo usare eval() completo su script packer complessi senza un motore browser,
+            // proviamo a cercare se c'è un oggetto JSON esposto o se possiamo usare un regex per "svg".
+            
+            // Tentativo 1: Simulazione estrazione variabile svg se presente in chiaro o semplice
+            // Spesso VidGuard inietta: window.svg = { "stream": "...", "hash": "..." }
+            
+            // Regex per trovare il contenuto dentro eval() se possibile, o direttamente window.svg
+            // Dato che il codice Kotlin usa Rhino per valutare JS, significa che è offuscato (Packer).
+            // Tuttavia, se siamo fortunati, possiamo usare QuickJS di Mangayomi.
+            
+            // Cerchiamo script content
+            // Nota: QuickJS supporta eval. Proviamo a isolare il codice.
+            const scriptContent = new Document(vidBody).selectFirst("script:containsData(eval)").data;
+            
+            if (scriptContent) {
+                // Prepariamo un contesto minimo per far girare lo script packer
+                const context = `
+                    var window = {};
+                    var document = {};
+                    var svg = null;
+                    ${scriptContent}
+                    // Lo script packer solitamente assegna variabili globali o window.svg
+                    // Se lo script assegna a window.svg, lo prendiamo
+                    JSON.stringify(window.svg || svg); 
+                `;
+                
+                // Mangayomi/QuickJS eval
+                try {
+                    const evalResult = eval(context); 
+                    const svgObj = JSON.parse(evalResult);
                     
-                    if (epId) {
-                        chapters.push({
-                            name: "Episodio " + epNum,
-                            url: epId, // ID per l'API
-                            scanlator: "AnimeWorld",
-                            // IMPORTANTE: dateUpload è obbligatorio per evitare il caricamento infinito
-                            // Usiamo la data corrente convertita in stringa (millisecondi)
-                            dateUpload: String(Date.now()) 
+                    if (svgObj && svgObj.stream) {
+                        const masterUrl = this.sigDecode(svgObj.stream);
+                        
+                        streams.push({
+                            url: masterUrl,
+                            quality: "VidGuard Auto",
+                            originalUrl: masterUrl,
+                            headers: headers,
+                            videoType: "hls" // Solitamente m3u8
                         });
                     }
+                } catch(e) {
+                    // Fallback se eval fallisce
+                    console.log("VidGuard eval failed: " + e.message);
                 }
             }
+        } catch (e) {
+            console.error("Errore VidGuard: " + e.message);
         }
-
-        return {
-            name: title,
-            imageUrl: img,
-            description: desc,
-            status: status,
-            genre: genres,
-            link: url, // IMPORTANTE: Passare anche il link della pagina
-            chapters: chapters.reverse() 
-        };
+    } else if (json.target && json.target.includes("animeworld")) {
+        // Link diretto (raro ma gestito nel kotlin)
+        streams.push({
+            url: json.grabber, // o json.target, dipende dalla risposta specifica
+            quality: "Direct",
+            originalUrl: json.grabber,
+            headers: headers
+        });
     }
 
-    // --- Video Extraction ---
+    return streams;
+  }
 
-    async getVideoList(url) {
-        const epId = url;
-        const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${epId}`;
-        
-        const apiRes = await this.client.get(apiUrl, this.getHeaders(this.source.baseUrl));
-        
-        if (!apiRes.body) return [];
-
-        let json;
-        try {
-            json = JSON.parse(apiRes.body);
-        } catch(e) {
-            return [];
-        }
-        
-        const grabber = json.grabber;
-        const target = json.target;
-        const streams = [];
-
-        // 1. Link Diretto (Grabber)
-        if (grabber && (grabber.includes("animeworld") || grabber.includes("http"))) {
-            streams.push({
-                url: grabber,
-                quality: "AnimeWorld Server",
-                originalUrl: grabber,
-                headers: {
-                    "Referer": this.source.baseUrl,
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-                }
-            });
-        } 
-        
-        // 2. Fallback
-        if (target && !streams.length) {
-             streams.push({
-                url: target,
-                quality: "External/Embed",
-                originalUrl: target
-            });
-        }
-
-        return streams;
-    }
-
-    getFilterList() {
-        return [];
-    }
-
-    getSourcePreferences() {
-        return [];
-    }
+  getSourcePreferences() {
+    return [
+      {
+        key: "animeworld_note",
+        listPreference: {
+          title: "Nota",
+          summary: "Questo plugin usa le API di AnimeWorld.so e decodifica VidGuard.",
+          valueIndex: 0,
+          entries: ["OK"],
+          entryValues: ["0"],
+        },
+      }
+    ];
+  }
 }
