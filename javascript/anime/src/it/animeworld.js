@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.1",
+    "version": "1.0.2",
     "pkgPath": "anime/src/it/animeworld.js"
 }];
 
@@ -54,7 +54,6 @@ class DefaultExtension extends MProvider {
             });
         }
 
-        // Controllo paginazione più generico
         const nextLink = doc.selectFirst("div.paging-wrapper a#next-page");
         const nextLinkAlt = doc.selectFirst("li.next a");
         
@@ -110,22 +109,19 @@ class DefaultExtension extends MProvider {
             genres.push(g.text);
         }
 
-        // --- ESTRAZIONE EPISODI (FIXED) ---
+        // --- ESTRAZIONE EPISODI ---
         const chapters = [];
         
-        // Cerchiamo il container dei server
         const serversContainer = doc.selectFirst(".widget.servers .widget-body");
         
         if (serversContainer) {
-            // Cerchiamo prima il server 9 (AnimeWorld), se non c'è prendiamo il primo disponibile
+            // Cerca server 9 (AW) o fallback sul primo attivo
             let targetServer = serversContainer.selectFirst(".server[data-name='9']");
             if (!targetServer) {
-                // Se non c'è il 9, proviamo a prendere quello "active" o il primo della lista
                 targetServer = serversContainer.selectFirst(".server.active") || serversContainer.selectFirst(".server");
             }
 
             if (targetServer) {
-                // Selettore più specifico per evitare link spazzatura
                 const episodeLinks = targetServer.select("li.episode > a");
 
                 for (const el of episodeLinks) {
@@ -135,8 +131,11 @@ class DefaultExtension extends MProvider {
                     if (epId) {
                         chapters.push({
                             name: "Episodio " + epNum,
-                            url: epId, 
-                            scanlator: "AnimeWorld"
+                            url: epId, // ID per l'API
+                            scanlator: "AnimeWorld",
+                            // IMPORTANTE: dateUpload è obbligatorio per evitare il caricamento infinito
+                            // Usiamo la data corrente convertita in stringa (millisecondi)
+                            dateUpload: String(Date.now()) 
                         });
                     }
                 }
@@ -149,6 +148,7 @@ class DefaultExtension extends MProvider {
             description: desc,
             status: status,
             genre: genres,
+            link: url, // IMPORTANTE: Passare anche il link della pagina
             chapters: chapters.reverse() 
         };
     }
@@ -157,7 +157,6 @@ class DefaultExtension extends MProvider {
 
     async getVideoList(url) {
         const epId = url;
-        // Chiamata API per ottenere il link reale
         const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${epId}`;
         
         const apiRes = await this.client.get(apiUrl, this.getHeaders(this.source.baseUrl));
@@ -175,7 +174,7 @@ class DefaultExtension extends MProvider {
         const target = json.target;
         const streams = [];
 
-        // 1. Link Diretto (Grabber) - Solitamente il più affidabile su AW
+        // 1. Link Diretto (Grabber)
         if (grabber && (grabber.includes("animeworld") || grabber.includes("http"))) {
             streams.push({
                 url: grabber,
@@ -188,7 +187,7 @@ class DefaultExtension extends MProvider {
             });
         } 
         
-        // 2. Fallback su Target se Grabber fallisce o non esiste
+        // 2. Fallback
         if (target && !streams.length) {
              streams.push({
                 url: target,
