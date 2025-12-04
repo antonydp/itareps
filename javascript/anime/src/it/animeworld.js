@@ -19,7 +19,7 @@ class DefaultExtension extends MProvider {
 
     getHeaders(url) {
         return {
-            "Referer": this.source.baseUrl,
+            "Referer": "https://www.animeworld.ac/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
             "X-Requested-With": "XMLHttpRequest"
         };
@@ -59,8 +59,20 @@ class DefaultExtension extends MProvider {
         let hasNextPage = false;
         if (paging) {
             const active = paging.selectFirst(".page-link.active");
-            if (active && active.parent && active.parent.nextElementSibling) {
+            // Verifica sicura dei genitori/fratelli
+            // In Mangayomi JS a volte la navigazione DOM è limitata,
+            // quindi controlliamo se esiste un link con pagina successiva
+            // Un metodo più robusto è cercare se c'è un elemento "next" o un numero > current
+            const nextLink = paging.selectFirst("li.next"); // Classe comune per 'next'
+            if (nextLink && !nextLink.attr("class").includes("disabled")) {
                 hasNextPage = true;
+            } else if (active) {
+                 // Fallback: proviamo a vedere se c'è un fratello dopo quello attivo
+                 // Nota: selectFirst non ritorna sempre il nodo DOM completo con parent/siblings in tutti gli ambienti JS
+                 // Meglio basarsi sull'URL se possibile o sulla presenza di un link "Next >"
+                 const pages = paging.select("a.page-link");
+                 const lastPage = pages[pages.length - 1];
+                 if (lastPage && lastPage.attr("href") !== "#") hasNextPage = true;
             }
         }
 
@@ -87,46 +99,66 @@ class DefaultExtension extends MProvider {
 
         const infoWidget = doc.selectFirst("div.widget.info");
         
-        const title = infoWidget.selectFirst(".info .title").text.replace(" (ITA)", "");
-        const img = doc.selectFirst(".thumb img").attr("src");
-        const desc = infoWidget.selectFirst(".desc").text.trim();
-        
+        let title = "Sconosciuto";
+        let img = "";
+        let desc = "";
+
+        if (infoWidget) {
+            title = infoWidget.selectFirst(".info .title")?.text.replace(" (ITA)", "") ?? "Sconosciuto";
+            // A volte l'immagine è nel widget, a volte fuori. Proviamo il selettore generico
+            const thumb = doc.selectFirst(".thumb img");
+            if (thumb) img = thumb.attr("src");
+            
+            const descElem = infoWidget.selectFirst(".desc");
+            if (descElem) desc = descElem.text.trim();
+        }
+
         let status = 5; // Unknown
-        const metaDt = infoWidget.select(".meta dt");
+        const metaDt = infoWidget ? infoWidget.select(".meta dt") : [];
         for (const dt of metaDt) {
             if (dt.text.includes("Stato")) {
                 const statusTxt = dt.nextElementSibling.text.toLowerCase();
-                if (statusTxt.includes("finito")) status = 1; // Completed
-                if (statusTxt.includes("in corso")) status = 0; // Ongoing
+                if (statusTxt.includes("finito")) status = 1; 
+                if (statusTxt.includes("in corso")) status = 0; 
             }
         }
 
         const genres = [];
-        const genreTags = infoWidget.select("a[href*='/genre/']");
+        const genreTags = infoWidget ? infoWidget.select("a[href*='/genre/']") : [];
         for (const g of genreTags) {
             genres.push(g.text);
         }
 
-        // Episodes
+        // --- ESTRAZIONE EPISODI ---
         const chapters = [];
-        const serverTabs = doc.select(".server.active .episode"); 
-        // Note: AnimeWorld has tabs for servers. Usually Server 9 (AnimeWorld) is default.
-        // We scrape the currently active list (usually Server 9 or 28).
-        // A smarter implementation would scan all servers, but usually the active one lists all eps.
         
-        const episodes = doc.select(".widget.servers .widget-body .server[data-name='9'] .episode"); // Force AW Server
-        const targetEps = episodes.length > 0 ? episodes : doc.select(".widget.servers .widget-body .server").first().select(".episode");
-
-        for (const ep of targetEps) {
-            const a = ep.selectFirst("a");
-            const epNum = a.attr("data-episode-num");
-            const epId = a.attr("data-id"); // Crucial for API
+        const widgetBody = doc.selectFirst(".widget.servers .widget-body");
+        
+        if (widgetBody) {
+            // Cerchiamo Server 9 (AnimeWorld)
+            let targetServer = widgetBody.selectFirst(".server[data-name='9']");
             
-            chapters.push({
-                name: "Episodio " + epNum,
-                url: epId, // We pass the ID, not the URL
-                scanlator: "AnimeWorld"
-            });
+            // Fallback
+            if (!targetServer) {
+                targetServer = widgetBody.selectFirst(".server");
+            }
+
+            if (targetServer) {
+                const episodeElements = targetServer.select(".episode a");
+
+                for (const el of episodeElements) {
+                    const epNum = el.attr("data-episode-num");
+                    const epId = el.attr("data-id"); 
+                    
+                    if (epId) {
+                        chapters.push({
+                            name: "Episodio " + epNum,
+                            url: epId, 
+                            scanlator: "AnimeWorld"
+                        });
+                    }
+                }
+            }
         }
 
         return {
@@ -135,58 +167,69 @@ class DefaultExtension extends MProvider {
             description: desc,
             status: status,
             genre: genres,
-            chapters: chapters.reverse()
+            chapters: chapters.reverse() 
         };
     }
 
     // --- Video Extraction ---
 
     async getVideoList(url) {
-        // 'url' here is the episode ID we saved in getDetail
         const epId = url;
         const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${epId}`;
         
-        const apiRes = await this.client.get(apiUrl, this.getHeaders());
-        const json = JSON.parse(apiRes.body);
+        // Header fondamentali per l'API
+        const apiRes = await this.client.get(apiUrl, this.getHeaders(this.source.baseUrl));
         
-        const grabber = json.grabber;
-        const target = json.target; // direct link or embed URL
+        if (!apiRes.body) return [];
 
+        let json;
+        try {
+            json = JSON.parse(apiRes.body);
+        } catch(e) {
+            console.log("Errore parsing JSON API: " + e);
+            return [];
+        }
+        
+        const target = json.target; 
+        const grabber = json.grabber; // <--- QUESTO È IL LINK DIRETTO
         const streams = [];
 
+        if (!target) return [];
+
+        // 1. Server Proprietario AnimeWorld (Il più comune)
         if (target.includes("animeworld.so") || target.includes("animeworld.ac")) {
-            // Direct file
-            streams.push({
-                url: target,
-                quality: "Default",
-                originalUrl: target
-            });
-        } else if (target.includes("listeamed.net")) {
-            // VidGuard Extractor logic
+            if (grabber) {
+                streams.push({
+                    url: grabber, // Usiamo GRABBER, non target
+                    quality: "AnimeWorld Server",
+                    originalUrl: grabber,
+                    headers: {
+                        "Referer": this.source.baseUrl // Serve per scaricare
+                    }
+                });
+            }
+        } 
+        // 2. VidGuard / Listeamed
+        else if (target.includes("listeamed.net")) {
             try {
+                // Per VidGuard usiamo il target (l'url della pagina embed) per fare scraping
                 const vidGuardRes = await this.client.get(target);
                 const vidGuardBody = vidGuardRes.body;
                 
-                // Find script with eval
                 const scriptRegex = /<script>eval\(function\(p,a,c,k,e,d\).*?<\/script>/s;
                 const match = vidGuardBody.match(scriptRegex);
                 
                 if (match) {
                     const scriptContent = match[0].replace("<script>", "").replace("</script>", "");
-                    const unpacked = unpackJs(scriptContent); // Mangayomi helper
+                    const unpacked = unpackJs(scriptContent); 
                     
-                    // Extract svg object
-                    // Look for: var svg={stream:"...",hash:"..."}
                     const svgRegex = /var\s+svg\s*=\s*({.*?});/;
                     const svgMatch = unpacked.match(svgRegex);
                     
                     if (svgMatch) {
-                        // Use a safer eval or JSON parse if standard JSON
-                        // Often it's JS object notation, not strict JSON. 
-                        // Let's try to extract field manually to be safe.
-                        const streamRaw = svgMatch[1].match(/stream\s*:\s*"([^"]+)"/)[1];
-                        
-                        if (streamRaw) {
+                        const streamMatch = svgMatch[1].match(/stream\s*:\s*"([^"]+)"/);
+                        if (streamMatch) {
+                            const streamRaw = streamMatch[1];
                             const playlistUrl = this.sigDecode(streamRaw);
                             streams.push({
                                 url: playlistUrl,
@@ -199,19 +242,23 @@ class DefaultExtension extends MProvider {
             } catch (e) {
                 console.log("VidGuard Error: " + e);
             }
-        } else {
-            // Fallback for other providers (simple redirect or direct mp4)
+        } 
+        // 3. Altri Player (Streamtape, ecc.)
+        else {
+             // Per streamtape e altri di solito si passa l'URL del target all'app 
+             // che ha estrattori generici, oppure si prova il grabber.
+             const finalUrl = grabber || target;
              streams.push({
-                url: target,
+                url: finalUrl,
                 quality: "External",
-                originalUrl: target
+                originalUrl: finalUrl
             });
         }
 
         return streams;
     }
 
-    // --- VidGuard Decryption (Ported from Kotlin) ---
+    // --- VidGuard Decryption ---
     sigDecode(url) {
         if (!url.includes("sig=")) return url;
         
@@ -226,27 +273,26 @@ class DefaultExtension extends MProvider {
         }
 
         // 2. Base64 Decode
-        // Assuming standard base64 in JS context (Mangayomi runs usually in QuickJS/JSC)
-        // If 'atob' is not available, we might need a polyfill, but typically it is.
         let decoded = "";
         try {
-            // Add padding if needed (Kotlin logic did this)
-            const padding = (t.length % 4 === 2) ? "==" : (t.length % 4 === 3) ? "=" : "";
-            const base64 = t + padding;
-            decoded = Buffer.from(base64, 'base64').toString('utf-8'); 
-            // NOTE: If Buffer is not defined in Mangayomi env, assume atob exists:
-            // decoded = atob(base64);
+            // Polyfill manuale per atob se non esiste (ambiente QuickJS)
+            // o uso Buffer se esiste (NodeJS env)
+            if (typeof atob === 'function') {
+                decoded = atob(t);
+            } else if (typeof Buffer !== 'undefined') {
+                decoded = Buffer.from(t, 'base64').toString('utf-8');
+            } else {
+                // Fallback brutale: proviamo a tornare la stringa se è già chiara,
+                // ma di solito VidGuard richiede base64 reale.
+                console.log("Manca atob/Buffer per decodificare Base64");
+                return url; 
+            }
         } catch (e) {
-            // Fallback if Buffer fails, assume browser-like env
-             const padding = (t.length % 4 === 2) ? "==" : (t.length % 4 === 3) ? "=" : "";
-             // Simple atob replacement if needed, or assume built-in
-             // This part relies on environment. Let's try the common 'atob' if Buffer fails
-             // or direct string manipulation if it's simple ASCII.
-             // Given CloudStream uses Android Base64, standard atob should work.
-             // However, Mangayomi JS env often has 'Buffer'.
+             console.log("Errore Base64: " + e);
+             return url;
         }
 
-        // 3. Drop last 5, Reverse, Swap pairs, Drop last 5 (again)
+        // 3. Manipolazione Stringa
         let processed = decoded.slice(0, -5).split("").reverse();
         
         for (let i = 0; i < processed.length; i += 2) {
