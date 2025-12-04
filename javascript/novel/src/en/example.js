@@ -6,7 +6,7 @@ const mangayomiSources = [{
   "iconUrl":
     "https://raw.githubusercontent.com/NAME/REPO-NAME/main/javascript/icon/en.examplenovel.png",
   "typeSource": "single",
-  "itemType": 2, // Use 0 for manga, 1 for anime and 2 for novel
+  "itemType": 2,
   "version": "1.0.0",
   "dateFormat": "",
   "dateFormatLocale": "",

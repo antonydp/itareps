@@ -5,7 +5,7 @@ const mangayomiSources = [{
     "apiUrl": "",
     "iconUrl": "https://example.com/test.png",
     "typeSource": "single",
-    "itemType": 0, // Use 0 for manga, 1 for anime and 2 for novel
+    "itemType": 0, 
     "version": "1.0.0",
     "pkgPath": "manga/src/en/example.js"
 }];
