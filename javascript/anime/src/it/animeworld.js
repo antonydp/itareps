@@ -1,226 +1,219 @@
-const mangayomiSources = [
-  {
+const mangayomiSources = [{
     "name": "AnimeWorld",
-    "id": 192837465,
-    "baseUrl": "https://www.animeworld.ac",
     "lang": "it",
+    "baseUrl": "https://www.animeworld.ac",
+    "apiUrl": "https://www.animeworld.so",
+    "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png",
     "typeSource": "single",
-    "iconUrl": "https://static.animeworld.ac/assets/images/favicon/android-icon-192x192.png?s",
-    "isNsfw": false,
-    "hasCloudflare": false,
-    "itemType": 1, 
-    "version": "1.0.1",
+    "itemType": 1,
+    "version": "1.0.3",
     "pkgPath": "anime/src/it/animeworld.js"
-  }
-];
+}];
 
 class DefaultExtension extends MProvider {
-  constructor() {
-    super();
-    this.client = new Client();
-  }
 
-  getPreference(key) {
-    return new SharedPreferences().get(key);
-  }
-
-  getBaseUrl() {
-    return this.source.baseUrl;
-  }
-
-  getHeaders(url) {
-    return {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-      "Referer": this.getBaseUrl() + "/",
-      "Origin": this.getBaseUrl(),
-      "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
-    };
-  }
-
-  async request(url, headers = {}) {
-    const finalHeaders = { ...this.getHeaders(url), ...headers };
-    return await this.client.get(url, finalHeaders);
-  }
-
-  async parseAnimeList(url) {
-    const res = await this.request(url);
-    
-    // Controllo anti-blocco semplice
-    if (res.statusCode !== 200) {
-        console.log("Errore Status Code: " + res.statusCode);
+    constructor() {
+        super();
+        this.client = new Client();
     }
 
-    const doc = new Document(res.body);
-    const list = [];
-    
-    const items = doc.select("div.film-list > .item");
-    
-    for (const item of items) {
-      const anchor = item.selectFirst("a.name");
-      const img = item.selectFirst("a.poster img");
-      
-      if (!anchor) continue;
-
-      const title = anchor.text().replace(" (ITA)", "");
-      const link = anchor.attr("href");
-      const imageUrl = img ? img.attr("src") : "";
-      
-      list.push({
-        name: title,
-        link: link,
-        imageUrl: imageUrl
-      });
+    // Header Generici per la navigazione (Ricerca, Dettagli)
+    // NON mettiamo X-Requested-With qui per evitare blocchi sulla ricerca
+    getHeaders(url) {
+        return {
+            "Referer": this.source.baseUrl + "/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+        };
     }
 
-    let hasNextPage = false;
-    const pagingWrapper = doc.selectFirst("#paging-form");
-    if (pagingWrapper) {
-      const totalPagesEl = pagingWrapper.selectFirst("span.total");
-      if (totalPagesEl) {
-        const totalPages = parseInt(totalPagesEl.text());
-        // Logica semplice: se nella pagina c'è un link alla "next page" o calcolo manuale
-        const currentPageEl = pagingWrapper.selectFirst("li.active span");
-        if (currentPageEl) {
-            const currentPage = parseInt(currentPageEl.text());
-            hasNextPage = currentPage < totalPages;
-        }
-      }
+    // Header Specifici per l'API Video
+    getApiHeaders() {
+        return {
+            "Referer": this.source.baseUrl + "/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "X-Requested-With": "XMLHttpRequest", // FONDAMENTALE per i video
+            "Accept": "application/json, text/javascript, */*; q=0.01"
+        };
     }
 
-    return { list, hasNextPage };
-  }
-
-  async getPopular(page) {
-    const url = `${this.getBaseUrl()}/filter?sort=6&page=${page}`;
-    return await this.parseAnimeList(url);
-  }
-
-  async getLatestUpdates(page) {
-    const url = `${this.getBaseUrl()}/filter?sort=1&page=${page}`;
-    return await this.parseAnimeList(url);
-  }
-
-  async search(query, page, filters) {
-    const url = `${this.getBaseUrl()}/filter?sort=0&keyword=${query}&page=${page}`;
-    return await this.parseAnimeList(url);
-  }
-
-  async getDetail(url) {
-    if (!url.startsWith("http")) {
-      url = this.getBaseUrl() + url;
+    async request(url) {
+        return await this.client.get(url, this.getHeaders(url));
     }
 
-    const res = await this.request(url);
-    const doc = new Document(res.body);
-    
-    const widgetInfo = doc.selectFirst("div.widget.info");
-    
-    if (!widgetInfo) {
-        // Fallback nel caso la pagina non sia caricata correttamente
-        return { name: "Errore caricamento", description: "Impossibile caricare i dettagli. Riprova.", chapters: [] };
-    }
+    // --- Search & Listing (La tua logica funzionante) ---
 
-    const title = widgetInfo.selectFirst(".info .title").text().replace(" (ITA)", "");
-    
-    let description = "";
-    const longDesc = widgetInfo.selectFirst(".desc .long");
-    description = longDesc ? longDesc.text() : widgetInfo.selectFirst(".desc").text();
-    
-    const imgEl = doc.selectFirst(".thumb img");
-    const imageUrl = imgEl ? imgEl.attr("src") : "";
-    
-    const genre = [];
-    const genresEl = widgetInfo.select(".meta a[href*='/genre/']");
-    if(genresEl) {
-        genresEl.forEach(el => genre.push(el.text()));
-    }
+    async getAnimeList(url) {
+        const res = await this.request(url);
+        const doc = new Document(res.body);
+        const elements = doc.select("div.film-list > .item");
+        const list = [];
 
-    let status = 5; 
-    const metaDt = widgetInfo.select(".meta dt");
-    const metaDd = widgetInfo.select(".meta dd");
-    
-    // In Mangayomi Document, select restituisce una lista, non bisogna usare forEach se non è supportato dall'implementazione specifica
-    // Usiamo un ciclo for classico per sicurezza con le liste Java/Kotlin mappate in JS
-    for (let i = 0; i < metaDt.length; i++) {
-      const label = metaDt[i].text();
-      if (label.includes("Stato")) {
-        const statusText = metaDd[i].text().toLowerCase();
-        if (statusText.includes("finito")) status = 1;
-        else if (statusText.includes("in corso")) status = 0;
-      }
-    }
+        for (const element of elements) {
+            const a = element.selectFirst("a.name");
+            const img = element.selectFirst("img");
+            const dubElem = element.selectFirst(".status .dub");
+            
+            if (!a) continue;
 
-    const chapters = [];
-    const episodes = doc.select('.server[data-name="9"] .episode');
-    
-    for(const ep of episodes) {
-        const aTag = ep.selectFirst("a");
-        if(aTag) {
-            const epNum = aTag.attr("data-episode-num");
-            const epLink = aTag.attr("href");
-            chapters.push({
-                name: `Episodio ${epNum}`,
-                url: epLink,
-                episode: epNum
+            let title = a.text;
+            if (dubElem) title += " (Dub)";
+
+            list.push({
+                name: title,
+                imageUrl: img ? img.attr("src") : "",
+                link: a.attr("href")
             });
         }
+
+        const nextLink = doc.selectFirst("div.paging-wrapper a#next-page");
+        const nextLinkAlt = doc.selectFirst("li.next a");
+        
+        let hasNextPage = false;
+        if (nextLink || nextLinkAlt) {
+            hasNextPage = true;
+        }
+
+        return { list, hasNextPage };
     }
 
-    chapters.reverse();
-
-    return {
-      name: title,
-      imageUrl: imageUrl,
-      description: description,
-      genre: genre,
-      status: status,
-      link: url,
-      chapters: chapters
-    };
-  }
-
-  async getVideoList(url) {
-    if (!url.startsWith("http")) {
-      url = this.getBaseUrl() + url;
+    async getPopular(page) {
+        return await this.getAnimeList(`${this.source.baseUrl}/filter?sort=6&page=${page}`);
     }
 
-    const res = await this.request(url);
-    const doc = new Document(res.body);
+    async getLatestUpdates(page) {
+        return await this.getAnimeList(`${this.source.baseUrl}/filter?sort=1&page=${page}`);
+    }
 
-    const server9 = doc.selectFirst('.server[data-name="9"]');
-    if (!server9) return [];
+    async search(query, page, filters) {
+        // Correzione URL ricerca per matchare la struttura del sito
+        return await this.getAnimeList(`${this.source.baseUrl}/filter?keyword=${query}&sort=1&page=${page}`);
+    }
 
-    const activeEp = server9.selectFirst("a.active");
-    if (!activeEp) return [];
+    // --- Details ---
 
-    const dataId = activeEp.attr("data-id");
-    if (!dataId) return [];
+    async getDetail(url) {
+        if (!url.startsWith("http")) {
+            url = this.source.baseUrl + url;
+        }
 
-    // API Call
-    const apiUrl = `https://www.animeworld.so/api/episode/info?id=${dataId}`;
-    
-    // Qui è cruciale l'header X-Requested-With per l'API di Animeworld
-    const apiRes = await this.request(apiUrl, {
-      "X-Requested-With": "XMLHttpRequest",
-      "Referer": url // Importante per bypassare controlli hotlink
-    });
+        const res = await this.request(url);
+        const doc = new Document(res.body);
 
-    const streams = [];
-    try {
-        const json = JSON.parse(apiRes.body);
+        const infoWidget = doc.selectFirst("div.widget.info");
+        
+        let title = infoWidget ? infoWidget.selectFirst(".info .title")?.text.replace(" (ITA)", "") : "Sconosciuto";
+        const thumb = doc.selectFirst("div.thumb img");
+        let img = thumb ? thumb.attr("src") : "";
+        
+        let desc = "";
+        const descElem = doc.selectFirst(".desc") || doc.selectFirst("#info .desc");
+        if (descElem) desc = descElem.text.trim();
 
-        if (json.target && json.target.toLowerCase().includes("animeworld")) {
+        let status = 5; 
+        const metaDt = infoWidget ? infoWidget.select(".meta dt") : [];
+        for (const dt of metaDt) {
+            if (dt.text.includes("Stato")) {
+                const statusTxt = dt.nextElementSibling.text.toLowerCase();
+                if (statusTxt.includes("finito")) status = 1; 
+                if (statusTxt.includes("in corso")) status = 0; 
+            }
+        }
+
+        const genres = [];
+        const genreTags = infoWidget ? infoWidget.select("a[href*='/genre/']") : [];
+        for (const g of genreTags) {
+            genres.push(g.text);
+        }
+
+        // --- ESTRAZIONE EPISODI ---
+        const chapters = [];
+        
+        const serversContainer = doc.selectFirst(".widget.servers .widget-body");
+        
+        if (serversContainer) {
+            // Cerchiamo specificamente il Server 9 (AnimeWorld Server) perché è quello diretto
+            let targetServer = serversContainer.selectFirst(".server[data-name='9']");
+            
+            // Se non c'è il server 9, proviamo un fallback generico
+            if (!targetServer) {
+                targetServer = serversContainer.selectFirst(".server.active") || serversContainer.selectFirst(".server");
+            }
+
+            if (targetServer) {
+                const episodeLinks = targetServer.select("li.episode > a");
+
+                for (const el of episodeLinks) {
+                    const epNum = el.attr("data-episode-num");
+                    const epId = el.attr("data-id"); 
+                    
+                    if (epId) {
+                        chapters.push({
+                            name: "Episodio " + epNum,
+                            url: epId, // Passiamo SOLO l'ID numerico al getVideoList
+                            scanlator: "AnimeWorld",
+                            dateUpload: String(Date.now()) 
+                        });
+                    }
+                }
+            }
+        }
+
+        return {
+            name: title,
+            imageUrl: img,
+            description: desc,
+            status: status,
+            genre: genres,
+            link: url,
+            chapters: chapters.reverse() 
+        };
+    }
+
+    // --- Video Extraction ---
+
+    async getVideoList(url) {
+        // Qui 'url' è in realtà l'ID dell'episodio (es. "12345") passato da getDetail
+        const epId = url;
+        const apiUrl = `${this.source.apiUrl}/api/episode/info?id=${epId}`;
+        
+        // Usiamo gli header specifici per l'API (con X-Requested-With)
+        const apiRes = await this.client.get(apiUrl, this.getApiHeaders());
+        
+        if (!apiRes.body) return [];
+
+        let json;
+        try {
+            json = JSON.parse(apiRes.body);
+        } catch(e) {
+            return [];
+        }
+        
+        const grabber = json.grabber;
+        const target = json.target;
+        const streams = [];
+
+        // AnimeWorld Server (Link diretto .mp4 di solito)
+        if (grabber && (grabber.includes("animeworld") || grabber.includes("http"))) {
             streams.push({
-                url: json.grabber,
-                originalUrl: json.grabber,
+                url: grabber,
                 quality: "AnimeWorld Server",
-                headers: this.getHeaders(json.grabber)
+                originalUrl: grabber,
+                headers: {
+                    "Referer": this.source.baseUrl + "/", // Importante per i video
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
             });
-        }
-    } catch(e) {
-        console.log("Errore parsing video: " + e.message);
+        } 
+        
+        return streams;
     }
 
-    return streams;
-  }
+    getFilterList() {
+        return [];
+    }
+
+    getSourcePreferences() {
+        return [];
+    }
 }
